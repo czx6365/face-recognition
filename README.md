@@ -6,23 +6,6 @@ data set: celebA
 [![PyTorch Version](https://img.shields.io/badge/PyTorch-2.0%2B-orange.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 📋 目录
-- [项目概述](#项目概述)
-- [模型架构](#模型架构)
-  - [SimpleNN (全连接神经网络)](#simplenn-全连接神经网络)
-  - [SimpleCNN (卷积神经网络)](#simplecnn-卷积神经网络)
-- [快速开始](#快速开始)
-  - [环境依赖](#环境依赖)
-  - [模型初始化](#模型初始化)
-  - [推理示例](#推理示例)
-- [训练指南](#训练指南)
-  - [数据预处理](#数据预处理)
-  - [超参数推荐](#超参数推荐)
-  - [性能对比](#性能对比)
-- [代码结构](#代码结构)
-- [扩展与修改](#扩展与修改)
-- [注意事项](#注意事项)
-- [许可证](#许可证)
 
 
 ## 项目概述
