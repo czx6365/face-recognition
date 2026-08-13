@@ -1,148 +1,163 @@
+"""CelebA multi-label facial-attribute dataset utilities.
+
+The project predicts the 40 binary attributes provided by CelebA.  The data
+root can be supplied explicitly or through the CELEBA_ROOT environment
+variable, so the repository no longer depends on a machine-specific path.
 """
-    Pytorch dataloader for the celebA dataset
 
-    The dataset is downloaded from the following link:
-        https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
-
-
-"""
+from __future__ import annotations
 
 import os
-import numpy as np
+from pathlib import Path
+from typing import List, Optional
+
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
-BASE_PATH = "F:\人脸识别比赛\CelebA"
-FILE_PATH = {
-    "eval_partition": f'{BASE_PATH}/Dataset/Eval/list_eval_partition.txt',
-    "anno_identity":f"{BASE_PATH}/Dataset/Anno/identity_CelebA.txt",
-    "anno_list_attr": f"{BASE_PATH}/Dataset/Anno/list_attr_celeba.txt",
-    "anno_bbox": f"{BASE_PATH}/Dataset/Anno/list_bbox_celeba.txt",
-    "anno_landmarks": f"{BASE_PATH}/Dataset/Anno/list_landmarks_align_celeba.txt", # This file is not used
-    "anno_landmarks_untouched": f"{BASE_PATH}/Dataset/Anno/list_landmarks_celeba.txt", # This file is not used
-    "img_dir": f"{BASE_PATH}/Dataset/Img/img_align_celeba/",
-}
 
-DefaultTransform = transforms.Compose([
-    transforms.Resize(128),
-    # transforms.CenterCrop(128),
-    transforms.ToTensor(),
-    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) # 0-255 -> 0-1
-])
+
+IMAGE_SIZE = (156, 128)
+
+DefaultTransform = transforms.Compose(
+    [
+        transforms.Resize(IMAGE_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=(0.485, 0.456, 0.406),
+            std=(0.229, 0.224, 0.225),
+        ),
+    ]
+)
+
+TrainTransform = transforms.Compose(
+    [
+        transforms.Resize(IMAGE_SIZE),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=(0.485, 0.456, 0.406),
+            std=(0.229, 0.224, 0.225),
+        ),
+    ]
+)
+
 
 class CelebADataset(Dataset):
-    """CelebA dataset."""
+    """CelebA dataset for 40-attribute multi-label prediction.
 
-    def __getitem__(self, idx):
-        """
-        根据索引获取数据样本的方法
-        参数:idx: 样本索引
-        返回: image: 处理后的图像张量
-            label: 处理后的标签张量
-        """
-        # 1. 获取图像路径
-        # 拼接图像完整路径：基础路径 + 当前数据中第idx行第0列的文件名
-        img_name = os.path.join(self.file_path['img_dir'], self.current_data.iloc[idx, 0])
-        # 2. 加载图像
-        image = Image.open(img_name)
-        # 3. 加载属性标签
-        # 获取当前数据中第idx行从第2列开始的所有列作为标签（假设前两列是文件名和其他信息）
-        label = self.current_data.iloc[idx, 2:].values.astype('float')
-        # 将标签转换为float32类型的PyTorch张量
-        label = torch.tensor(label, dtype=torch.float32)
-        # 4. 将标签转换为one-hot编码形式
-        # 原始数据中-1表示不适用/负样本，转换为0
-        label = torch.where(label == -1, torch.tensor(0), label)
-        # 原始数据中1表示正样本，保持为1
-        label = torch.where(label == 1, torch.tensor(1), label)
-        # 5. 应用图像变换（如果有）
-        if self.transform:
-            image = self.transform(image)
-        # 返回处理后的图像和标签
-        return image, label
-    
-    def __len__(self):
-        return len(self.current_data)
+    Expected layout (``data_root`` may point either to the outer CelebA
+    directory or directly to ``Dataset``)::
 
-    def __init__(self, transform=DefaultTransform, train_mode="train"):
-        """
-        数据集初始化方法
+        CelebA/
+          Dataset/
+            Eval/list_eval_partition.txt
+            Anno/list_attr_celeba.txt
+            Img/img_align_celeba/*.jpg
 
-        参数:
-            transform (callable, 可选): 应用于样本的可选数据变换，默认为DefaultTransform
-            train_mode (string): 数据集模式，可选"train"(训练)、"val"(验证)或"test"(测试)
-        """
-        # 1. 初始化文件路径和变换
-        self.file_path = FILE_PATH  # 预设的文件路径配置
-        self.transform = transform  # 图像预处理变换方法
+    CelebA uses -1/1 attribute labels. They are converted to 0/1 tensors for
+    binary multi-label learning.
+    """
 
-        # 2. 加载元数据
-        self.data = self._load_data()  # 调用内部方法加载并合并所有数据
+    SPLIT_TO_PARTITION = {"train": 0, "val": 1, "test": 2}
 
-        # 3. 根据模式设置当前使用的数据子集
-        self.current_data = None  # 初始化当前数据为空
+    def __init__(
+        self,
+        transform=DefaultTransform,
+        train_mode: str = "train",
+        data_root: Optional[str] = None,
+    ) -> None:
+        if train_mode not in self.SPLIT_TO_PARTITION:
+            raise ValueError(
+                f"Invalid train_mode={train_mode!r}; choose from "
+                f"{sorted(self.SPLIT_TO_PARTITION)}"
+            )
 
-        # 根据train_mode选择不同分区的数据:
-        # partition列中0=训练集，1=验证集，2=测试集
-        if train_mode == "train":
-            self.current_data = self.data[self.data['partition'] == 0]  # 筛选训练集
-        elif train_mode == "val":
-            self.current_data = self.data[self.data['partition'] == 1]  # 筛选验证集
-        elif train_mode == "test":
-            self.current_data = self.data[self.data['partition'] == 2]  # 筛选测试集
-        else:
-            raise ValueError("Invalid train mode")  # 非法模式报错
+        self.transform = transform
+        self.dataset_dir = self._resolve_dataset_dir(data_root)
+        self.file_path = {
+            "eval_partition": self.dataset_dir / "Eval" / "list_eval_partition.txt",
+            "anno_list_attr": self.dataset_dir / "Anno" / "list_attr_celeba.txt",
+            "img_dir": self.dataset_dir / "Img" / "img_align_celeba",
+        }
+        self._validate_paths()
+
+        self.data, self.attribute_names = self._load_data()
+        partition_id = self.SPLIT_TO_PARTITION[train_mode]
+        self.current_data = (
+            self.data[self.data["partition"] == partition_id]
+            .reset_index(drop=True)
+        )
+
+    @staticmethod
+    def _resolve_dataset_dir(data_root: Optional[str]) -> Path:
+        root_value = data_root or os.getenv("CELEBA_ROOT") or "CelebA"
+        root = Path(root_value).expanduser().resolve()
+        dataset_dir = root / "Dataset"
+        return dataset_dir if dataset_dir.exists() else root
+
+    def _validate_paths(self) -> None:
+        missing = [str(path) for path in self.file_path.values() if not path.exists()]
+        if missing:
+            formatted = "\n  - ".join(missing)
+            raise FileNotFoundError(
+                "CelebA files were not found. Set --data-root or CELEBA_ROOT. "
+                f"Missing:\n  - {formatted}"
+            )
 
     def _load_data(self):
-        """
-        内部方法：加载并合并分区文件和属性文件
-
-        返回:
-            pd.DataFrame: 合并后的完整数据集
-        """
-        # 1. 加载数据分区文件
-        # 文件格式：每行包含图片ID和分区标识(0/1/2)
-        # 参数说明：
-        #   delim_whitespace=True - 使用空白符分隔
-        #   header=None - 无表头
-        #   names - 指定列名
         partition = pd.read_csv(
-            self.file_path['eval_partition'],
-            delim_whitespace=True,
+            self.file_path["eval_partition"],
+            sep=r"\s+",
             header=None,
-            names=['img_id', 'partition']
+            names=["img_id", "partition"],
+            dtype={"img_id": str, "partition": int},
         )
-        # 确保数据类型正确
-        partition['partition'] = partition['partition'].astype(int)
-        partition['img_id'] = partition['img_id'].astype(str)
 
-        # 2. 加载属性标注文件
-        # 文件格式：第一行是属性数量，第二行开始是属性名称，之后每行对应一张图片的属性
+        attr_path = self.file_path["anno_list_attr"]
+        with attr_path.open("r", encoding="utf-8") as handle:
+            _ = handle.readline()  # number of images
+            attribute_names: List[str] = handle.readline().strip().split()
+
         attr = pd.read_csv(
-            self.file_path['anno_list_attr'],
-            delim_whitespace=True,
-            header=1  # 第一行作为列名
+            attr_path,
+            sep=r"\s+",
+            skiprows=2,
+            header=None,
+            names=["img_id", *attribute_names],
         )
-        # 添加img_id列（使用行索引作为图片ID）
-        attr['img_id'] = attr.index.astype(str)
+        attr["img_id"] = attr["img_id"].astype(str)
 
-        # 3. 合并两个DataFrame（通过img_id列）
-        self.data = pd.merge(partition, attr, on='img_id')
-        return self.data
+        merged = pd.merge(
+            partition,
+            attr,
+            on="img_id",
+            how="inner",
+            validate="one_to_one",
+        )
+        return merged, attribute_names
+
+    def __len__(self) -> int:
+        return len(self.current_data)
+
+    def __getitem__(self, idx: int):
+        row = self.current_data.iloc[idx]
+        image_path = self.file_path["img_dir"] / row["img_id"]
+
+        with Image.open(image_path) as image_file:
+            image = image_file.convert("RGB")
+            if self.transform is not None:
+                image = self.transform(image)
+
+        labels = row[self.attribute_names].to_numpy(dtype="float32")
+        labels = torch.from_numpy((labels > 0).astype("float32"))
+        return image, labels
+
 
 if __name__ == "__main__":
-    dataset = CelebADataset()
-    print(len(dataset))
-    img, label = dataset[0]
-    # label: [0, 1, 0, 1, ...]
-    # prediction: [0-1, 0-1, 0-1, ...]
-    # question: how to build a model to predict the label
-    # model: 
-    # input: img, output: prediction
-    # plt img
-    import matplotlib.pyplot as plt
-    plt.imshow(img.permute(1, 2, 0))
-    plt.show()
-    print(label)
+    dataset = CelebADataset(train_mode="train")
+    image, labels = dataset[0]
+    print(f"samples={len(dataset)}")
+    print(f"image_shape={tuple(image.shape)}")
+    print(f"num_attributes={labels.numel()}")
