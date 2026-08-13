@@ -1,62 +1,160 @@
-# face-recognition
-data set: celebA
-# 🖼️ 图像分类模型库 (SimpleNN & SimpleCNN)
+# CelebA Facial Attribute Recognition
 
-[![Python Version](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![PyTorch Version](https://img.shields.io/badge/PyTorch-2.0%2B-orange.svg)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+**Third Prize — XJTLU Facial Recognition Contest**
 
+A PyTorch project for **multi-label facial attribute recognition** on the CelebA dataset. Given one aligned face image, the model predicts the 40 binary attributes provided by CelebA, such as *Smiling*, *Eyeglasses*, *Male*, *Young*, and hair-related attributes.
 
+> Although the repository originated from a facial-recognition competition, the implemented learning task is specifically **40-attribute facial analysis**, not face-identity verification.
 
-## 项目概述
-本项目基于 **PyTorch** 框架实现了两种轻量级图像分类模型，专为 **40类别图像分类任务** 设计，适用于小数据集或资源受限场景（如边缘设备部署）。代码结构简洁易懂，包含完整的模型定义、前向传播逻辑及维度计算说明，支持快速集成到实际项目或作为深度学习入门学习案例。
+## Project Overview
 
+The project explores how model capacity changes performance on the same facial-attribute prediction task. It contains three model families:
 
-## 模型架构
-### SimpleNN (全连接神经网络)
-适用于低分辨率图像或扁平化特征输入，通过两层全连接层实现从像素特征到类别概率的映射，结构简单、推理速度快。
+| Model | Role | Main idea |
+| --- | --- | --- |
+| `SimpleNN` | Baseline | Flatten the image and learn attribute logits with a two-layer MLP |
+| `SimpleCNN` | Lightweight vision model | Learn local facial features with convolution blocks and adaptive pooling |
+| `ResNet50` | Transfer-learning model | Fine-tune an ImageNet-pretrained ResNet-50 for 40 binary outputs |
 
-#### 核心结构
-| 网络层类型       | 输入维度                | 输出维度                | 关键操作                  |
-|------------------|-------------------------|-------------------------|---------------------------|
-| 展平层 (Flatten) | `[batch, 3, 156, 128]`  | `[batch, 60672]`        | 图像张量转一维向量        |
-| 全连接层1 (fc1)  | `[batch, 60672]`        | `[batch, hidden_size]`  | 线性变换 + ReLU激活       |
-| 全连接层2 (fc2)  | `[batch, hidden_size]`  | `[batch, num_classes]`  | 线性变换（输出logits）    |
+The competition project received **Third Prize in the XJTLU Facial Recognition Contest**.
 
-#### 关键参数
-- `input_size`: 固定为 `3×156×128 = 60672`（对应3通道156×128图像）
-- `hidden_size`: 隐藏层神经元数量（建议初始值：1024/2048，根据数据复杂度调整）
-- `num_classes`: 输出类别数（默认40，可自定义）
+## Problem Formulation
 
+Each CelebA image is associated with 40 binary attributes. Therefore, this is not a 40-class softmax problem: one face can have many positive attributes simultaneously.
 
-### SimpleCNN (卷积神经网络)
-通过卷积层提取图像局部空间特征，结合池化层降低维度，保留图像空间关联性，分类性能优于全连接网络，适用于纹理复杂的图像任务。
+The network outputs a vector of 40 logits:
 
-#### 核心结构
-| 网络块       | 包含层类型                | 输入维度                | 输出维度                | 关键说明                  |
-|--------------|---------------------------|-------------------------|-------------------------|---------------------------|
-| 卷积块1      | Conv2d → ReLU → MaxPool2d | `[batch, 3, 156, 128]`  | `[batch, 16, 78, 64]`   | 16个5×5卷积核，2×2池化下采样 |
-| 卷积块2      | Conv2d → ReLU → MaxPool2d | `[batch, 16, 78, 64]`   | `[batch, 32, 39, 32]`   | 32个5×5卷积核，再次下采样  |
-| 展平层       | Reshape                   | `[batch, 32, 39, 32]`   | `[batch, 39936]`        | 特征维度压缩（32×39×32）  |
-| 全连接层 (fc) | Linear                    | `[batch, 39936]`        | `[batch, num_classes]`  | 输出类别logits            |
+```text
+face image
+    ↓
+feature extractor
+    ↓
+40 independent attribute logits
+    ↓ sigmoid at evaluation
+40 binary predictions
+```
 
-#### 维度计算逻辑
-原始输入：`3×156×128`（通道×高×宽）  
-1. 卷积块1后：高/宽 → 156/2=78，128/2=64 → 尺寸 `16×78×64`  
-2. 卷积块2后：高/宽 → 78/2=39，64/2=32 → 尺寸 `32×39×32`  
-3. 展平后：`32×39×32 = 39936`（全连接层输入维度）
+Training uses `BCEWithLogitsLoss`, which combines the numerically stable sigmoid operation with binary cross-entropy for multi-label learning.
 
+## Modeling Strategy
 
-## 快速开始
-### 环境依赖
-需提前安装以下依赖库（建议使用虚拟环境）：
+### 1. Fully Connected Baseline — `SimpleNN`
+
+The simplest baseline flattens the normalized image and feeds it through two fully connected layers. It serves as a reference point for understanding why spatial inductive bias matters in face analysis.
+
+### 2. Lightweight CNN — `SimpleCNN`
+
+The CNN progressively extracts local facial patterns through three convolution blocks:
+
+```text
+Conv → BatchNorm → ReLU → MaxPool
+Conv → BatchNorm → ReLU → MaxPool
+Conv → BatchNorm → ReLU → MaxPool
+               ↓
+       AdaptiveAvgPool
+               ↓
+          Linear(40)
+```
+
+Adaptive pooling removes the original dependence on a hard-coded flattened feature size and makes the architecture more robust to image-resolution changes.
+
+### 3. ResNet50 Transfer Learning
+
+For the strongest model family in the repository, a pretrained ResNet-50 is adapted by replacing its final classification layer with a 40-output linear head. This allows the model to reuse general visual representations while learning CelebA-specific facial attributes.
+
+## Data Pipeline
+
+The repository uses CelebA's official:
+
+- aligned face images;
+- train/validation/test partition file;
+- 40-attribute annotation file.
+
+The loader converts CelebA labels from `{-1, +1}` to `{0, 1}` and applies ImageNet-style normalization. Training additionally uses random horizontal flipping as lightweight augmentation.
+
+A fixed resize to `156 × 128` keeps the data shape deterministic across environments.
+
+## Training and Evaluation
+
+The training pipeline now includes:
+
+- deterministic random seeds;
+- GPU/CPU device selection;
+- `BCEWithLogitsLoss` for stable multi-label optimization;
+- AdamW or SGD optimization;
+- validation-based best-checkpoint selection;
+- label-level accuracy;
+- micro precision, recall, and F1;
+- held-out test evaluation;
+- saved checkpoints, metrics, training history, and learning curves.
+
+The public repository does **not** currently contain a verified competition-score artifact, so no unverified accuracy number is reported here. The externally confirmed result is the **Third Prize** competition award.
+
+## Repository Structure
+
+```text
+face-recognition/
+├── Dataloader.py     # CelebA parsing, splits, transforms, multi-label targets
+├── Model.py          # SimpleNN, SimpleCNN, ResNet50 model factory
+├── Train.py          # training, validation, test evaluation, checkpointing
+├── requirements.txt  # Python dependencies
+├── .gitignore        # generated files / local data exclusions
+└── README.md
+```
+
+## Quick Start
+
+Install dependencies:
+
 ```bash
-# 基础依赖
-pip install torch==2.0.0+cu118  # GPU版本（CPU版本：torch==2.0.0）
-pip install numpy==1.24.3
-pip install pillow==10.0.1  # 若需处理图像文件
+pip install -r requirements.txt
+```
 
-# 可选依赖（训练与可视化）
-pip install torchvision==0.15.1
-pip install matplotlib==3.7.1
-pip install tqdm==4.65.0
+Point the project to CelebA either with `--data-root` or the environment variable:
+
+```bash
+export CELEBA_ROOT=/path/to/CelebA
+```
+
+Expected layout:
+
+```text
+CelebA/
+└── Dataset/
+    ├── Eval/list_eval_partition.txt
+    ├── Anno/list_attr_celeba.txt
+    └── Img/img_align_celeba/
+```
+
+Train a model, for example:
+
+```bash
+python Train.py --model ResNet50 --epochs 25 --batch-size 128
+```
+
+Outputs are written to `outputs/` by default.
+
+## Engineering Improvements in This Version
+
+The original competition code demonstrated the core modeling pipeline, but several details were tied to the original development machine. This repository refresh keeps the same task and model progression while making the code easier to inspect and reproduce:
+
+- removed the hard-coded Windows data path;
+- added `CELEBA_ROOT` / `--data-root` configuration;
+- made CelebA annotation parsing explicit and robust;
+- enforced deterministic image dimensions;
+- changed `Sigmoid + BCELoss` to `BCEWithLogitsLoss`;
+- removed hard-coded CNN flatten dimensions with adaptive pooling;
+- replaced the legacy `torch.hub` ResNet loader with `torchvision.models`;
+- added reproducible evaluation and checkpoint artifacts.
+
+## Award
+
+**Third Prize, XJTLU Facial Recognition Contest**
+
+The project demonstrates a complete computer-vision workflow from dataset parsing and multi-label formulation to baseline comparison, CNN feature learning, transfer learning, and held-out evaluation.
+
+## Dataset
+
+CelebA: *Large-scale CelebFaces Attributes (CelebA) Dataset*, originally released by the Multimedia Laboratory at The Chinese University of Hong Kong.
+
+Dataset page: <https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html>
