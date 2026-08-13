@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local datasets and generated outputs
+CelebA/
+Dataset/
+data/
+outputs/
+models/
+*.pt
+*.pth
+
+# Notebooks / caches
+.ipynb_checkpoints/
+.pytest_cache/
