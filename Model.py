@@ -1,110 +1,86 @@
-"""
-    This file contains the model for the application.
-    The model contains:
-     1. A simple NN classification model.
-     2. A simple CNN classification model.
+"""Model definitions for CelebA facial-attribute recognition."""
 
-"""
+from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torchvision.models import ResNet50_Weights, resnet50
+
+
+NUM_ATTRIBUTES = 40
 
 
 class SimpleNN(nn.Module):
-    """
-    简单的全连接神经网络分类模型
-    包含2个全连接层
+    """Two-layer fully connected baseline for flattened face images."""
 
-    输入尺寸: batch, 3, 156, 128 (通道, 高, 宽)
-    """
+    def __init__(self, input_size: int, hidden_size: int, num_classes: int = NUM_ATTRIBUTES):
+        super().__init__()
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_size, num_classes),
+        )
 
-    def __init__(self, input_size, hidden_size, num_classes=40):
-        """
-        初始化网络结构
-
-        参数:
-            input_size: 输入特征维度 (3*156*128)
-            hidden_size: 隐藏层神经元数量
-            num_classes: 输出类别数(默认40类)
-        """
-        super(SimpleNN, self).__init__()
-        # 第一全连接层: 输入维度 -> 隐藏层维度
-        self.fc1 = nn.Linear(input_size, hidden_size)  # 公式: Θ^T X + b
-        # 第二全连接层: 隐藏层维度 -> 类别数
-        self.fc2 = nn.Linear(hidden_size, num_classes)
-
-    def forward(self, x):
-        """
-        前向传播过程
-
-        参数:
-            x: 输入张量 [batch, 3, 156, 128]
-        返回:
-            输出张量 [batch, num_classes]
-        """
-        # 展平操作: [batch, 3, 156, 128] -> [batch, 3*156*128]
-        x = x.view(x.size(0), -1)
-        # 第一层全连接 + ReLU激活
-        out = self.fc1(x)
-        out = F.relu(out)
-        # 第二层全连接 (无激活函数，输出原始logits)
-        out = self.fc2(out)
-        return out
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(x)
 
 
 class SimpleCNN(nn.Module):
+    """Lightweight CNN baseline with resolution-independent pooling.
+
+    Adaptive average pooling removes the original hard-coded fully connected
+    input size and makes the model robust to small changes in image resolution.
+    The network returns raw logits for use with BCEWithLogitsLoss.
     """
-    简单的卷积神经网络分类模型
-    包含2个卷积层和1个全连接层
 
-    输入尺寸: 3, 156, 128 (通道, 高, 宽)
-    全连接层输入尺寸: 32*39*32 (自动计算)
-    """
+    def __init__(self, num_classes: int = NUM_ATTRIBUTES):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(p=0.3),
+            nn.Linear(128, num_classes),
+        )
 
-    def __init__(self, num_classes=40):
-        """
-        初始化网络结构
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.features(x))
 
-        参数:
-            num_classes: 输出类别数(默认40类)
-        """
-        super(SimpleCNN, self).__init__()
-        # 第一卷积块: Conv2d -> ReLU -> MaxPool
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=5, stride=1, padding=2),  # 保持空间维度
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))  # 下采样到原尺寸1/2
 
-        # 第二卷积块: Conv2d -> ReLU -> MaxPool
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),  # 通道数16->32
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))  # 再次下采样到1/4
+def build_model(
+    name: str,
+    num_classes: int = NUM_ATTRIBUTES,
+    pretrained: bool = True,
+) -> nn.Module:
+    """Construct one of the models used in the project."""
+    normalized = name.lower()
 
-        # 全连接层: 32*39*32 -> num_classes
-        # 计算说明:
-        # 原始输入: 156x128
-        # 第一次池化后: 78x64
-        # 第二次池化后: 39x32
-        # 通道数: 32
-        self.fc = nn.Linear(32 * 39 * 32, num_classes)
+    if normalized == "simplenn":
+        # Default project transform is 3 x 156 x 128.
+        return SimpleNN(3 * 156 * 128, hidden_size=300, num_classes=num_classes)
 
-    def forward(self, x):
-        """
-        前向传播过程
+    if normalized == "simplecnn":
+        return SimpleCNN(num_classes=num_classes)
 
-        参数:
-            x: 输入张量 [batch, 3, 156, 128]
-        返回:
-            输出张量 [batch, num_classes]
-        """
-        # 第一卷积块
-        out = self.layer1(x)
-        # 第二卷积块
-        out = self.layer2(out)
-        # 展平操作: [batch, 32, 39, 32] -> [batch, 32*39*32]
-        out = out.reshape(out.size(0), -1)
-        # 全连接层
-        out = self.fc(out)
-        return out
+    if normalized == "resnet50":
+        weights = ResNet50_Weights.DEFAULT if pretrained else None
+        model = resnet50(weights=weights)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        return model
+
+    raise ValueError("Unknown model. Choose from: SimpleNN, SimpleCNN, ResNet50")
